@@ -6,89 +6,86 @@ st.set_page_config(page_title="Google Ad Scraper Log Classifier", layout="wide")
 st.title("📊 Google Ad Scraper Log Classifier")
 
 st.markdown("""
-Paste your domain list below and upload the log file. The tool will:
-- Classify domains using strict 3-rule logic
-- Only classify domains from your input
-- Ignore unrelated log noise
+Paste your domain list below and upload the `.log` file. The tool will:
+- Classify based only on your input list
+- Apply exact 3-rule logic:
+  - "Total results fetched" → No Active Ads
+  - "Error processing" → Active Ads
+  - Neither → Non-Advertiser
 """)
 
-# === Input: Pasted domain list ===
+# Input domain list
 domains_input = st.text_area("✏️ Paste your domain list (one per line):")
 
-# === Input: Log file upload ===
-uploaded_log = st.file_uploader("📥 Upload log file (.txt or .log)", type=["txt", "log", "pdf"])
+# Upload raw log file (.log or .txt)
+uploaded_log = st.file_uploader("📥 Upload the original .log file", type=["log", "txt"])
 
 if domains_input and uploaded_log:
-    # Step 1: Normalize and clean input domains
-    domain_lines = domains_input.strip().splitlines()
-    domain_list = {
+    # Normalize input domains
+    raw_domains = domains_input.strip().splitlines()
+    normalized_domains = {
         d.strip().lower()
         .replace("http://", "")
         .replace("https://", "")
         .replace("www.", "")
         .rstrip("/")
-        for d in domain_lines if d.strip()
+        for d in raw_domains if d.strip()
     }
 
-    # Step 2: Read the log file
+    # Read log content
     log_text = uploaded_log.read().decode("utf-8", errors="ignore").lower()
 
-    # Step 3: Match logic per domain
-    advertisers_with_no_ads = set()
-    advertisers_with_active_ads = set()
-    all_logged_domains = set()
+    # Sets for classification
+    no_ads = set()
+    active_ads = set()
+    non_advertisers = set()
 
-    for domain in domain_list:
-        # Build variants to match common patterns
-        domain_variants = [
-            domain,
-            f"http://www.{domain}/",
-            f"www.{domain}",
-            f"http://{domain}/"
+    # Exact matching, domain by domain
+    for domain in normalized_domains:
+        found = False
+        variants = [
+            f'total results fetched for {domain}: 0',
+            f'total results fetched for www.{domain}: 0',
+            f'total results fetched for http://www.{domain}/: 0',
         ]
-
-        matched = False
-
-        for variant in domain_variants:
-            if f'total results fetched for {variant}: 0' in log_text:
-                advertisers_with_no_ads.add(domain)
-                matched = True
+        for variant in variants:
+            if variant in log_text:
+                no_ads.add(domain)
+                found = True
                 break
 
-        if not matched:
-            for variant in domain_variants:
-                if f'error processing "{variant}"' in log_text:
-                    advertisers_with_active_ads.add(domain)
-                    matched = True
+        if not found:
+            error_variants = [
+                f'error processing "{domain}/"',
+                f'error processing "www.{domain}/"',
+                f'error processing "http://www.{domain}/"',
+            ]
+            for variant in error_variants:
+                if variant in log_text:
+                    active_ads.add(domain)
+                    found = True
                     break
 
-        if matched:
-            all_logged_domains.add(domain)
+        if not found:
+            non_advertisers.add(domain)
 
-    # Step 4: The rest are Non-Advertisers
-    non_advertisers = domain_list - all_logged_domains
-
-    # === Display results
+    # Output
     st.success("✅ Classification Complete")
 
     def show(label, items):
         st.markdown(f"### {label} ({len(items)})")
-        if items:
-            st.code("\n".join(sorted(items)))
-        else:
-            st.text("None")
+        st.code("\n".join(sorted(items)) if items else "None")
 
-    show("Advertisers with No Active Ads", advertisers_with_no_ads)
-    show("Advertisers with Active Ads", advertisers_with_active_ads)
+    show("Advertisers with No Active Ads", no_ads)
+    show("Advertisers with Active Ads", active_ads)
     show("Non-Advertisers", non_advertisers)
 
-    # === Export CSV
+    # Export CSV
     st.markdown("---")
-    st.subheader("📤 Download Results as CSV")
-    all_rows = [(d, "Advertiser with No Active Ads") for d in advertisers_with_no_ads] + \
-               [(d, "Advertiser with Active Ads") for d in advertisers_with_active_ads] + \
-               [(d, "Non-Advertiser") for d in non_advertisers]
-
-    df = pd.DataFrame(all_rows, columns=["Domain", "Classification"])
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("⬇️ Download CSV", data=csv, file_name="classified_domains.csv", mime="text/csv")
+    st.subheader("📤 Export CSV")
+    rows = [(d, "Advertiser with No Active Ads") for d in no_ads] + \
+           [(d, "Advertiser with Active Ads") for d in active_ads] + \
+           [(d, "Non-Advertiser") for d in non_advertisers]
+    df = pd.DataFrame(rows, columns=["Domain", "Classification"])
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("⬇️ Download CSV", csv, "classified_domains.csv", "text/csv")
