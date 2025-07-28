@@ -6,24 +6,21 @@ import pandas as pd
 
 st.set_page_config(page_title="Google Ad Scraper Log Classifier", layout="wide")
 st.title("📊 Google Ad Scraper Log Classifier")
-
 st.markdown("""
-Paste your domain list below and upload the scraper log file. This tool will classify each domain as:
-- **Advertiser with No Active Ads**
-- **Advertiser with Active Ads**
-- **Non-Advertiser**
-
-It will also count the number of unique creative IDs to verify total advertiser matches.
+Paste your domain list below and upload the log file. The tool will:
+- Accurately classify each domain
+- Follow your original 3-step logic
+- Export results to CSV
 """)
 
-# === Step 1: Domain input ===
+# === Input: Pasted domain list ===
 domains_input = st.text_area("✏️ Paste your domain list (one per line):")
 
-# === Step 2: Log upload ===
+# === Input: Log file upload ===
 uploaded_log = st.file_uploader("📥 Upload log file (.txt or .log)", type=["txt", "log"])
 
 if domains_input and uploaded_log:
-    # === Parse domain list ===
+    # === Step 1: Normalize domain input ===
     domain_lines = domains_input.strip().splitlines()
     domain_list = set(
         d.strip().lower()
@@ -34,56 +31,45 @@ if domains_input and uploaded_log:
         for d in domain_lines if d.strip()
     )
 
-    # === Read log content ===
+    # === Step 2: Read and normalize log ===
     log_text = uploaded_log.read().decode("utf-8", errors="ignore")
 
-    # === Step 3: Detect "No Active Ads" ===
+    # === Step 3: Find "No Active Ads" domains ===
     no_ads_pattern = r'Total results fetched for .*?([a-zA-Z0-9.-]+\.[a-zA-Z]+).*?: 0'
     no_ads_matches = re.findall(no_ads_pattern, log_text)
     no_ads_set = set(d.replace("www.", "").lower() for d in no_ads_matches)
 
-    # === Step 4: Detect "Error Processing" ===
+    # === Step 4: Find "Error processing" domains ===
     error_pattern = r'Error processing "(?:http:\/\/)?(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]+)\/?"'
     error_matches = re.findall(error_pattern, log_text)
     error_set = set(d.replace("www.", "").lower() for d in error_matches)
 
-    # === Step 5: Final classifications ===
-    active_ads_set = error_set - no_ads_set
-    non_advertisers_set = domain_list - no_ads_set - active_ads_set
+    # === Step 5: Apply logic strictly ===
+    advertisers_with_no_ads = no_ads_set
+    advertisers_with_active_ads = error_set - no_ads_set
+    non_advertisers = domain_list - advertisers_with_no_ads - advertisers_with_active_ads
 
-    # === Step 6: Count unique creative IDs for verification ===
-    creative_id_pattern = r'Successfully fetched creative ID (CR[0-9]+)'
-    creative_ids = re.findall(creative_id_pattern, log_text)
-    unique_creative_ids = set(creative_ids)
-    advertiser_id_count = len(unique_creative_ids)
-
-    # === Display Results ===
+    # === Step 6: Display results ===
     st.success("✅ Classification Complete")
 
-    def display_list(label, items):
+    def show(label, items):
         st.markdown(f"### {label} ({len(items)})")
         if items:
-            st.code("\n".join(sorted(items)), language="text")
+            st.code("\n".join(sorted(items)))
         else:
-            st.text("None found.")
+            st.text("None")
 
-    display_list("Advertisers with No Active Ads", no_ads_set)
-    display_list("Advertisers with Active Ads", active_ads_set)
-    display_list("Non-Advertisers", non_advertisers_set)
+    show("Advertisers with No Active Ads", advertisers_with_no_ads)
+    show("Advertisers with Active Ads", advertisers_with_active_ads)
+    show("Non-Advertisers", non_advertisers)
 
-    # === Step 7: Verification Section ===
+    # === Step 7: Export CSV ===
     st.markdown("---")
-    st.subheader("🧮 Advertiser Count Verification")
-    st.markdown(f"**Total classified advertisers (No Ads + Active Ads):** {len(no_ads_set) + len(active_ads_set)}")
-    st.markdown(f"**Total unique creative IDs (≈ advertisers):** {advertiser_id_count}")
+    st.subheader("📤 Download Results as CSV")
+    all_rows = [(d, "Advertiser with No Active Ads") for d in advertisers_with_no_ads] + \
+               [(d, "Advertiser with Active Ads") for d in advertisers_with_active_ads] + \
+               [(d, "Non-Advertiser") for d in non_advertisers]
 
-    # === Step 8: CSV Download ===
-    st.markdown("---")
-    st.subheader("📤 Export Classified Results")
-    combined = [(d, "Advertiser with No Active Ads") for d in no_ads_set] + \
-               [(d, "Advertiser with Active Ads") for d in active_ads_set] + \
-               [(d, "Non-Advertiser") for d in non_advertisers_set]
-
-    df = pd.DataFrame(combined, columns=["Domain", "Classification"])
+    df = pd.DataFrame(all_rows, columns=["Domain", "Classification"])
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button("⬇️ Download CSV", data=csv, file_name="classified_domains.csv", mime="text/csv")
